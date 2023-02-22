@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -44,6 +46,92 @@ func help() {
 	fmt.Printf("\033[33m %s\n", "                                                  ")
 	fmt.Printf("\033[33m %s\n", "Keep calm and use: ./DNSExplorer -d <domain name>\033[0m")
 	os.Exit(1)
+}
+
+type CrtShResult struct {
+	CommonName string `json:"common_name"`
+}
+
+func crtsh(domainName string) {
+
+	subdomainfile := domainName + "-subdomains.txt"
+	webserversfile := domainName + "-webserver.txt"
+
+	subdomainsFile, err := os.Create(subdomainfile)
+	if err != nil {
+		fmt.Println("\033[31m[-]\033[0m Error creating file ", subdomainfile)
+		os.Exit(1)
+	}
+	defer subdomainsFile.Close()
+
+	swebsrvsFile, err := os.Create(webserversfile)
+	if err != nil {
+		fmt.Println("\033[31m[-]\033[0m Error creating file ", webserversfile)
+		os.Exit(1)
+	}
+	defer swebsrvsFile.Close()
+
+	subdomainsSlice := []string{}
+
+	url := fmt.Sprintf("https://crt.sh/?q=%s&output=json", domainName)
+
+	resp, err := http.Get(url)
+	if err == nil {
+		defer resp.Body.Close()
+
+		var results []CrtShResult
+		err = json.NewDecoder(resp.Body).Decode(&results)
+		if err == nil {
+			fmt.Println("\n\033[36m[+]\033[0m \033[32mCRTSH Recon\n\033[0m")
+			for _, result := range results {
+				fmt.Println(result.CommonName)
+				uriSubdomain := strings.Replace(result.CommonName, "*.", "", -1)
+				subdomainsSlice = append(subdomainsSlice, uriSubdomain)
+			}
+			count := len(results)
+			fmt.Printf("\n\033[36m[¬] Total: \033[37m%d\033[0m\n\n", count)
+			httpDiscover(subdomainsSlice, subdomainsFile, swebsrvsFile)
+		} else {
+			fmt.Println("\033[31m[-]\033[0m Error decoding domain information on crt.sh")
+		}
+
+	} else {
+		fmt.Println("\033[31m[-]\033[0m Error querying domain information on crt.sh")
+	}
+}
+
+// Create another slice of existing webservers and save them in a file at the end of the function execution
+// Implement threading in the httpDiscover function call
+// Use sort to sort the list of subdomains before passing it to the httpDiscover function
+// Keep only unique records in the slices to avoid duplicates
+
+func httpDiscover(subdomains []string, subdomainsFile, swebsrvsFile *os.File) {
+
+	for _, subdomain := range subdomains {
+		URI := fmt.Sprintf("https://%s/", subdomain)
+		_, err := subdomainsFile.WriteString(subdomain + "\n")
+		if err != nil {
+			fmt.Println("\033[31m[-]\033[0m Error writing to file " + subdomainsFile.Name())
+			return
+		}
+
+		resp, err := http.Get(URI)
+		if err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 100 && resp.StatusCode <= 500 {
+				fmt.Printf("\033[36m[¬] Webserver found on\033[32m %s\033[36m with response code\033[0m %d\033[0m\n\n", URI, resp.StatusCode)
+				_, err = swebsrvsFile.WriteString(URI + "\n")
+				if err != nil {
+					fmt.Println("\033[31m[-]\033[0m Error writing to file " + swebsrvsFile.Name())
+					return
+				}
+			} else {
+				fmt.Println("error en la linea 129: ", err)
+			}
+		} else {
+			fmt.Println("error en la linea 132", err)
+		}
+	}
 }
 
 func transferZone(nameserver, domain string) bool {
@@ -151,8 +239,8 @@ func initRecon(domainName string) {
 		fmt.Printf("\n\033[32m[~] MX record for %s:\n", domainName+"\033[0m")
 		for _, mx := range mxRecords {
 			fmt.Printf("%s %d\n", mx.Host, mx.Pref)
-			fmt.Println()
 		}
+		fmt.Println()
 	}
 
 	// Print TXT records
@@ -188,6 +276,7 @@ func main() {
 	} else {
 		banner()
 		initRecon(domain)
+		crtsh(domain)
 	}
 
 }
