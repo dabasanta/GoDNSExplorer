@@ -52,7 +52,23 @@ type CrtShResult struct {
 	CommonName string `json:"common_name"`
 }
 
+func deleteDoubleEntries(allSubdomains []string) []string {
+	unique := make(map[string]bool)
+	result := []string{}
+
+	for _, item := range allSubdomains {
+		if _, found := unique[item]; !found {
+			unique[item] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
 func crtsh(domainName string) {
+
+	fmt.Println("\n\033[36m[+]\033[0m \033[32mCRTSH Recon\n\033[0m")
 
 	subdomainfile := domainName + "-subdomains.txt"
 	webserversfile := domainName + "-webserver.txt"
@@ -78,23 +94,24 @@ func crtsh(domainName string) {
 	resp, err := http.Get(url)
 	if err == nil {
 		defer resp.Body.Close()
-
 		var results []CrtShResult
 		err = json.NewDecoder(resp.Body).Decode(&results)
 		if err == nil {
-			fmt.Println("\n\033[36m[+]\033[0m \033[32mCRTSH Recon\n\033[0m")
 			for _, result := range results {
-				fmt.Println(result.CommonName)
-				uriSubdomain := strings.Replace(result.CommonName, "*.", "", -1)
-				subdomainsSlice = append(subdomainsSlice, uriSubdomain)
+				uriSubdomain := strings.Replace(result.CommonName, "*.", "", -1) // Clear subdomain register to avoid wildcard items
+				subdomainsSlice = append(subdomainsSlice, uriSubdomain)          // save subdomain to sondomains slice
 			}
-			count := len(results)
-			fmt.Printf("\n\033[36m[¬] Total: \033[37m%d\033[0m\n\n", count)
-			httpDiscover(subdomainsSlice, subdomainsFile, swebsrvsFile)
+			filterSubdomains := deleteDoubleEntries(subdomainsSlice) //Filer subdomain to avoid duplicate entries
+			sort.Strings(filterSubdomains)                           // Sort strings slice
+			count := len(filterSubdomains)                           // Make a count of the registers
+			for _, item := range filterSubdomains {
+				fmt.Println(item) //Print filter subdomains reg
+			}
+			fmt.Printf("\n\033[36m[¬] Total: \033[37m%d\033[0m\n\n", count) // Print registers count
+			httpDiscover(filterSubdomains, subdomainsFile, swebsrvsFile)    // Call function to discover HTTP servers on sorted filter subdomain slice
 		} else {
 			fmt.Println("\033[31m[-]\033[0m Error decoding domain information on crt.sh")
 		}
-
 	} else {
 		fmt.Println("\033[31m[-]\033[0m Error querying domain information on crt.sh")
 	}
@@ -102,20 +119,22 @@ func crtsh(domainName string) {
 
 // Create another slice of existing webservers and save them in a file at the end of the function execution
 // Implement threading in the httpDiscover function call
-// Use sort to sort the list of subdomains before passing it to the httpDiscover function
-// Keep only unique records in the slices to avoid duplicates
+// * Use sort to sort the list of subdomains before passing it to the httpDiscover function
+// * Keep only unique records in the slices to avoid duplicates
 
 func httpDiscover(subdomains []string, subdomainsFile, swebsrvsFile *os.File) {
 
-	for _, subdomain := range subdomains {
-		URI := fmt.Sprintf("https://%s/", subdomain)
-		_, err := subdomainsFile.WriteString(subdomain + "\n")
+	for _, item := range subdomains { // Save subdomains to file
+		_, err := subdomainsFile.WriteString(item + "\n") //Save register
 		if err != nil {
 			fmt.Println("\033[31m[-]\033[0m Error writing to file " + subdomainsFile.Name())
 			return
 		}
+	}
 
-		resp, err := http.Get(URI)
+	for _, subdomain := range subdomains {
+		URI := fmt.Sprintf("https://%s/", subdomain) //Create HTTPS URI
+		resp, err := http.Get(URI)                   // Make GET request
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode >= 100 && resp.StatusCode <= 500 {
@@ -125,11 +144,7 @@ func httpDiscover(subdomains []string, subdomainsFile, swebsrvsFile *os.File) {
 					fmt.Println("\033[31m[-]\033[0m Error writing to file " + swebsrvsFile.Name())
 					return
 				}
-			} else {
-				fmt.Println("error en la linea 129: ", err)
 			}
-		} else {
-			fmt.Println("error en la linea 132", err)
 		}
 	}
 }
